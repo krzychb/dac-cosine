@@ -1,0 +1,6 @@
+sdkconfig*
+pictures/owonread.py
+.cproject
+.project
+.settings/*
+build/*
