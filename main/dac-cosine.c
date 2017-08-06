@@ -16,6 +16,8 @@
 #include "soc/rtc_io_reg.h"
 #include "soc/rtc_cntl_reg.h"
 #include "soc/sens_reg.h"
+#include "soc/rtc.h"
+
 
 #include "driver/dac.h"
 
@@ -23,10 +25,11 @@
  * so they may be then accessed and changed from debugger
  * over an JTAG interface
  */
-int frequency = 8;    // about 1kHz
-int scale = 1;        // 50% of the full scale
-int offset;           // leave it default / 0 = no any offset
-int invert = 2;       // invert MSB to get sine waveform
+int clk_8m_div = 0;      // RTC 8M clock divider (division is by clk_8m_div+1, i.e. 0 means 8MHz frequency)
+int frequency_step = 8;  // Frequency step for CW generator
+int scale = 1;           // 50% of the full scale
+int offset;              // leave it default / 0 = no any offset
+int invert = 2;          // invert MSB to get sine waveform
 
 
 /*
@@ -56,12 +59,14 @@ void dac_cosine_enable(dac_channel_t channel)
 /*
  * Set frequency of internal CW generator common to both DAC channels
  *
- * Range 0x0001 - 0xFFFF
+ * clk_8m_div: 0b000 - 0b111
+ * frequency_step: range 0x0001 - 0xFFFF
  *
  */
-void dac_frequency_set(int frequency)
+void dac_frequency_set(int clk_8m_div, int frequency_step)
 {
-    SET_PERI_REG_BITS(SENS_SAR_DAC_CTRL1_REG, SENS_SW_FSTEP, frequency, SENS_SW_FSTEP_S);
+    REG_SET_FIELD(RTC_CNTL_CLK_CONF_REG, RTC_CNTL_CK8M_DIV_SEL, clk_8m_div);
+    SET_PERI_REG_BITS(SENS_SAR_DAC_CTRL1_REG, SENS_SW_FSTEP, frequency_step, SENS_SW_FSTEP_S);
 }
 
 
@@ -133,13 +138,16 @@ void dac_invert_set(dac_channel_t channel, int invert)
     }
 }
 
-
+/*
+ * Main task that let you test CW parameters in action
+ *
+*/
 void dactask(void* arg)
 {
     while(1){
 
         // frequency setting is common to both channels
-        dac_frequency_set(frequency);
+        dac_frequency_set(clk_8m_div, frequency_step);
 
         /* Tune parameters of channel 2 only
          * to see and compare changes against channel 1
@@ -148,10 +156,13 @@ void dactask(void* arg)
         dac_offset_set(DAC_CHANNEL_2, offset);
         dac_invert_set(DAC_CHANNEL_2, invert);
 
-        printf("DAC frequency: %5d, DAC2 scale: %d, offset %3d, invert: %d\n", frequency, scale, offset, invert);
-        vTaskDelay(1000/portTICK_PERIOD_MS);
+        float frequency = RTC_FAST_CLK_FREQ_APPROX / (1 + clk_8m_div) * (float) frequency_step / 65536;
+        printf("clk_8m_div: %d, frequency step: %d, frequency: %.0f Hz\n", clk_8m_div, frequency_step, frequency);
+        printf("DAC2 scale: %d, offset %d, invert: %d\n", scale, offset, invert);
+        vTaskDelay(2000/portTICK_PERIOD_MS);
     }
 }
+
 
 /*
  * Generate a sine waveform on both DAC channels:
